@@ -1,30 +1,65 @@
 import { useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { Hero } from "@/components/Hero";
 import { PetitionCard } from "@/components/PetitionCard";
-import { mockPetitions } from "@/data/mockData";
+import { fetchPetitions } from "@/lib/data";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const Index = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("all");
 
-  // Get unique brands
+  // Fetch data using useQuery
+  const { data: petitions, isLoading } = useQuery({
+    queryKey: ['petitions'],
+    queryFn: fetchPetitions,
+  });
+
+  // Fallback to empty array if data is loading or null
+  const activePetitions = petitions || [];
+
+  // Get unique brands - CRITICAL FIX: Filter out null/empty strings before rendering
   const brands = useMemo(() => {
-    return Array.from(new Set(mockPetitions.map(p => p.brand))).sort();
-  }, []);
+    return Array.from(new Set(activePetitions
+        .map(p => p.brand)
+        // Filter out any brand name that evaluates to false (e.g., "", null, undefined)
+        .filter(brand => brand) 
+    )).sort();
+  }, [activePetitions]);
 
   // Filter petitions
   const filteredPetitions = useMemo(() => {
-    return mockPetitions.filter(petition => {
+    if (activePetitions.length === 0) return [];
+
+    return activePetitions.filter(petition => {
       const matchesSearch = petition.brand.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           petition.title.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesBrand = selectedBrand === "all" || petition.brand === selectedBrand;
       return matchesSearch && matchesBrand;
     });
-  }, [searchQuery, selectedBrand]);
+  }, [searchQuery, selectedBrand, activePetitions]);
+
+  // Skeleton loading component for cards
+  const LoadingSkeletons = () => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {[...Array(6)].map((_, i) => (
+        <div key={i} className="space-y-4 rounded-lg border p-6">
+          <Skeleton className="h-4 w-1/4" />
+          <Skeleton className="h-6 w-3/4" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-2/3" />
+          <div className="flex items-center gap-4 pt-2">
+             <Skeleton className="h-4 w-1/3" />
+             <Skeleton className="h-4 w-1/4" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-background">
@@ -50,7 +85,12 @@ const Index = () => {
               className="pl-10"
             />
           </div>
-          <Select value={selectedBrand} onValueChange={setSelectedBrand}>
+          {/* Ensure the Select dropdown handles loading and is disabled if no brands exist */}
+          <Select 
+            value={selectedBrand} 
+            onValueChange={setSelectedBrand} 
+            disabled={isLoading || brands.length === 0} 
+          >
             <SelectTrigger className="w-full sm:w-[200px]">
               <SelectValue placeholder="All Brands" />
             </SelectTrigger>
@@ -62,16 +102,27 @@ const Index = () => {
             </SelectContent>
           </Select>
         </div>
+        
+        {/* Display Loading Skeletons */}
+        {isLoading && <LoadingSkeletons />}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredPetitions.map((petition) => (
-            <PetitionCard key={petition.id} petition={petition} />
-          ))}
-        </div>
+        {/* Display Filtered Petitions or Not Found message */}
+        {!isLoading && filteredPetitions.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredPetitions.map((petition) => (
+              // Note: PetitionCard uses the live petition.id for routing
+              <PetitionCard key={petition.id} petition={petition} />
+            ))}
+          </div>
+        )}
 
-        {filteredPetitions.length === 0 && (
+        {!isLoading && filteredPetitions.length === 0 && (
           <div className="text-center py-12">
-            <p className="text-muted-foreground">No investigations found matching your search.</p>
+            <p className="text-muted-foreground">
+              {activePetitions.length === 0
+                ? "No active investigations have been published yet."
+                : "No investigations found matching your search."}
+            </p>
           </div>
         )}
       </main>

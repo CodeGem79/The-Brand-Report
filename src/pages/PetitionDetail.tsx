@@ -1,3 +1,5 @@
+// src/pages/PetitionDetail.tsx
+
 import { useState } from "react";
 import { useParams, Link, Navigate } from "react-router-dom";
 import { ArrowLeft, TrendingUp, MessageSquare, Clock, CheckCircle2 } from "lucide-react";
@@ -8,40 +10,68 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { mockPetitions } from "@/data/mockData";
 import { useToast } from "@/hooks/use-toast";
+import { useQuery, useQueryClient } from "@tanstack/react-query"; // [MODIFIED] Added useQueryClient
+import { fetchPetition, addPublicComment } from "@/lib/data"; // [MODIFIED] Added addPublicComment
 
 export default function PetitionDetail() {
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
-  const petition = mockPetitions.find(p => p.id === id);
+  const queryClient = useQueryClient(); // [NEW] Initialize query client
   
-  const [hasSupported, setHasSupported] = useState(false);
+  // Fetch data using useQuery
+  const { data: petition, isLoading } = useQuery({
+    queryKey: ['petition', id],
+    queryFn: () => (id ? fetchPetition(id) : Promise.resolve(undefined)), 
+    enabled: !!id,
+  });
+  
+  const [isPostingComment, setIsPostingComment] = useState(false);
   const [commentName, setCommentName] = useState("");
   const [commentText, setCommentText] = useState("");
 
-  if (!petition) {
+  if (!id || (!isLoading && !petition)) {
     return <Navigate to="/" replace />;
   }
 
+  // [MODIFIED] Disabled/Removed logic. The button is now purely informative.
   const handleSupport = () => {
-    setHasSupported(true);
     toast({
-      title: "Support Added",
-      description: "Thank you for supporting this investigation. Your voice matters.",
+      title: "Support Feature Disabled",
+      description: "Support is counted only when a verified report is submitted and linked by our Admin team.",
     });
   };
 
-  const handleComment = (e: React.FormEvent) => {
+  // [MODIFIED] Implemented live write logic for comments
+  const handleComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!commentName.trim() || !commentText.trim()) return;
-    
-    toast({
-      title: "Comment Submitted",
-      description: "Your comment has been added to this investigation.",
-    });
-    setCommentName("");
-    setCommentText("");
+    if (!id) return;
+
+    setIsPostingComment(true);
+    try {
+        await addPublicComment(id, commentName.trim(), commentText.trim());
+        
+        toast({
+            title: "Comment Submitted",
+            description: "Thank you for sharing your experience. Your comment is now live.",
+        });
+        
+        // Invalidate the query cache to force a data refresh on this page
+        queryClient.invalidateQueries({ queryKey: ['petition', id] });
+        
+        setCommentName("");
+        setCommentText("");
+    } catch (error) {
+        console.error("Error posting comment:", error);
+        toast({
+            title: "Submission Failed",
+            description: "Could not post comment. Check database connection or rules.",
+            variant: "destructive"
+        });
+    } finally {
+        setIsPostingComment(false);
+    }
   };
 
   const statusColors = {
@@ -55,6 +85,26 @@ export default function PetitionDetail() {
     investigating: "Investigating",
     resolved: "Resolved"
   };
+
+  // Display Loading State
+  if (isLoading || !petition) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <main className="container py-8 max-w-4xl">
+           <div className="flex flex-col gap-4">
+              <div className="h-6 w-32 bg-muted rounded-md mb-6" />
+              <div className="h-10 w-full bg-muted rounded-lg" />
+              <div className="h-6 w-1/2 bg-muted rounded-md" />
+              <div className="h-40 w-full bg-muted rounded-lg mt-8" />
+              <div className="h-6 w-full bg-muted rounded-lg mt-8" />
+              <div className="h-4 w-full bg-muted rounded-md" />
+              <div className="h-4 w-3/4 bg-muted rounded-md" />
+           </div>
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -86,14 +136,15 @@ export default function PetitionDetail() {
           <CardContent className="pt-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="text-center">
+                {/* Supporter Count is now strictly from the DB */}
                 <div className="text-3xl font-bold text-accent mb-1">
-                  {(petition.supporters + (hasSupported ? 1 : 0)).toLocaleString()}
+                  {petition.supporters.toLocaleString()}
                 </div>
-                <div className="text-sm text-muted-foreground">Supporters</div>
+                <div className="text-sm text-muted-foreground">Verified Claimants</div>
               </div>
               <div className="text-center">
                 <div className="text-3xl font-bold mb-1">{petition.comments.length}</div>
-                <div className="text-sm text-muted-foreground">Comments</div>
+                <div className="text-sm text-muted-foreground">Total Comments</div>
               </div>
               <div className="text-center">
                 <div className="text-3xl font-bold mb-1">{petition.updates.length}</div>
@@ -103,14 +154,14 @@ export default function PetitionDetail() {
             
             <Separator className="my-6" />
             
+            {/* The button is now a purely informational placeholder */}
             <Button 
               onClick={handleSupport} 
-              disabled={hasSupported}
-              className="w-full gap-2"
+              variant="outline"
+              className="w-full gap-2 text-sm"
               size="lg"
             >
-              <TrendingUp className="w-5 h-5" />
-              {hasSupported ? "Support Added" : "Add Your Support"}
+              Support is counted by verified Incident Reports.
             </Button>
           </CardContent>
         </Card>
@@ -185,7 +236,9 @@ export default function PetitionDetail() {
                 rows={4}
                 required
               />
-              <Button type="submit" className="w-full">Post Comment</Button>
+              <Button type="submit" className="w-full" disabled={isPostingComment}>
+                {isPostingComment ? "Posting..." : "Post Comment"}
+              </Button>
             </form>
 
             <Separator className="my-6" />
@@ -194,12 +247,25 @@ export default function PetitionDetail() {
               {petition.comments.map((comment) => (
                 <div key={comment.id} className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-sm">{comment.author}</span>
+                    <span className="font-semibold text-sm">
+                      {comment.author}
+                      
+                      {comment.isClaimant && (
+                          <Badge 
+                              variant="secondary" 
+                              className="ml-2 bg-accent/10 text-accent-foreground text-xs font-normal hover:bg-accent/10" 
+                          >
+                              Verified Report
+                          </Badge>
+                      )}
+                    </span>
                     <span className="text-xs text-muted-foreground">
                       {new Date(comment.date).toLocaleDateString()}
                     </span>
                   </div>
-                  <p className="text-sm text-muted-foreground">{comment.content}</p>
+                  <p className={`text-sm ${comment.isClaimant ? 'text-foreground font-mono' : 'text-muted-foreground'}`}>
+                      {comment.content}
+                  </p>
                   <Separator />
                 </div>
               ))}

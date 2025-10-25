@@ -1,18 +1,17 @@
-// Import the functions you need from the SDKs you need
+// src/lib/firebase.ts
+
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAnalytics } from "firebase/analytics";
-
+import { getAuth } from "firebase/auth"; 
+// [CRITICAL IMPORT] Import Cloud Functions SDK
+import { getFunctions } from "firebase/functions"; 
+// Import data functions (for completeness)
 import { collection, getDocs, doc, getDoc, addDoc, query, where, DocumentData } from "firebase/firestore";
-import { Petition } from "./data/mockData";
 
 
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
+  // Your existing configuration details
   apiKey: "AIzaSyBItMxEzj5rALmhss1CiVVIlv0gqN9_PtU",
   authDomain: "the-brand-report.firebaseapp.com",
   projectId: "the-brand-report",
@@ -22,8 +21,11 @@ const firebaseConfig = {
   measurementId: "G-VR6TT1VZ2L"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
 
-export const db = getFirestore(app);
+export const db = getFirestore(app); 
+export const auth = getAuth(app); 
+
+// FIX: Export the Functions instance
+export const functions = getFunctions(app);
