@@ -1,181 +1,188 @@
-import { useState } from "react";
+import { useState, useEffect } from "react"; // [MODIFIED] Added useEffect
 import { Header } from "@/components/Header";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { AlertCircle } from "lucide-react";
+
+// Import Firebase dependency
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase"; // Your secure connection
+import { db } from "@/lib/firebase"; 
+import { Link } from "react-router-dom"; // Assuming Link is used for navigation away from the page
 
-const FileComplaint = () => {
+
+export default function FileComplaint() {
   const { toast } = useToast();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [desiredOutcome, setDesiredOutcome] = useState(""); // State added for input control
+  
+  // [NEW HOOK] Auto-scroll to the top of the page on load
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []); // Empty dependency array ensures this runs only once on mount
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    brandName: "",
+    category: "",
+    amount: "",
+    issueDescription: "",
+    desiredOutcome: "",
+    status: "New", // Default status for new reports
+    verification_level: "Unverified"
+  });
+  
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { id, value } = e.target;
+    setFormData({ ...formData, [id]: value });
+  };
+  
+  const handleSelectChange = (value: string) => {
+    setFormData({ ...formData, category: value });
+  };
+  
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
 
-    const formData = new FormData(e.currentTarget);
-    
-    // Convert form data into the structured report format
-    const incidentReport = {
-      name: formData.get("name") as string,
-      email: formData.get("email") as string,
-      phone: formData.get("phone") as string | null,
-      brandName: formData.get("brandName") as string,
-      category: formData.get("category") as string,
-      purchaseDate: formData.get("purchaseDate") as string | null,
-      orderNumber: formData.get("orderNumber") as string | null,
-      // Ensure amount is stored as a number, or null
-      amount: parseFloat(formData.get("amount") as string) || null,
-      issueDescription: formData.get("issueDescription") as string,
-      desiredOutcome: desiredOutcome,
-      
-      // Crucial backend metadata for tracking/triage
-      status: "New", 
-      verification_level: "Unverified",
-      submittedAt: serverTimestamp(),
-    };
-
     try {
-      // 1. Submit the report to the 'incident_reports' collection
-      await addDoc(collection(db, "incident_reports"), incidentReport);
-
-      // 2. Display success toast and clear form
+      // Prepare data for submission
+      const dataToSubmit = {
+        ...formData,
+        amount: formData.amount ? parseFloat(formData.amount) : null,
+        submittedAt: serverTimestamp(),
+      };
+      
+      // Send data to the 'incident_reports' collection
+      await addDoc(collection(db, "incident_reports"), dataToSubmit);
+      
       toast({
-        title: "Intelligence Submitted",
-        description: "Thank you. Your report is now in the queue for verification. Your voice matters.",
+        title: "Report Filed",
+        description: "Your report has been successfully filed and is pending review.",
       });
 
-      (e.target as HTMLFormElement).reset();
-      setDesiredOutcome(""); // Reset custom state
+      // Reset form (except category, which is often kept)
+      setFormData({
+        name: "",
+        email: "",
+        phone: "",
+        brandName: "",
+        category: formData.category,
+        amount: "",
+        issueDescription: "",
+        desiredOutcome: "",
+        status: "New", 
+        verification_level: "Unverified"
+      });
+      
     } catch (error) {
-      console.error("Error adding document: ", error);
+      console.error("Error submitting report: ", error);
       toast({
         title: "Submission Failed",
-        description: "Could not submit the report. Please try again or check your connection.",
+        description: "Could not file report. Please check your connection.",
         variant: "destructive"
       });
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setIsSubmitting(false);
   };
+
 
   return (
     <div className="min-h-screen bg-background">
       <Header />
-      
-      <main className="container mx-auto px-4 py-12 max-w-3xl">
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold mb-4">Submit an Incident Report</h1>
-          <p className="text-muted-foreground">
-            Help us hold companies accountable. Submit your *Intelligence* and we'll use it to build cases for trading standards.
-          </p>
-        </div>
+      <main className="container py-8 max-w-2xl">
+        <Card>
+          <CardHeader>
+            <CardTitle>File an Incident Report</CardTitle>
+            <CardDescription>
+              Tell us about a deceptive practice, policy violation, or unfair charge. Your report is crucial to launching an investigation.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-6">
+              
+              <h3 className="text-lg font-semibold border-b pb-2">Incident Details</h3>
+              
+              <div className="grid grid-cols-1 gap-4">
+                  <div className="space-y-2">
+                      <Label htmlFor="brandName">Brand Name Involved</Label>
+                      <Input id="brandName" value={formData.brandName} onChange={handleChange} placeholder="e.g., FastShip Logistics" required />
+                  </div>
+                  
+                  <div className="space-y-2">
+                      <Label htmlFor="category">Issue Category</Label>
+                      <Select value={formData.category} onValueChange={handleSelectChange}>
+                          <SelectTrigger id="category">
+                              <SelectValue placeholder="Select an issue category" />
+                          </SelectTrigger>
+                          <SelectContent>
+                              <SelectItem value="Subscription-Traps">Subscription Traps</SelectItem>
+                              <SelectItem value="Deceptive-Pricing">Deceptive Pricing</SelectItem>
+                              <SelectItem value="Warranty-Denial">Warranty/Claim Denial</SelectItem>
+                              <SelectItem value="False-Advertising">False Advertising</SelectItem>
+                              <SelectItem value="Refund-Issues">Refund Issues</SelectItem>
+                              <SelectItem value="Poor-Service">Poor Service / Other</SelectItem>
+                          </SelectContent>
+                      </Select>
+                  </div>
 
-        <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900 rounded-lg p-4 mb-8 flex gap-3">
-          <AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
-          <div className="text-sm text-blue-900 dark:text-blue-100">
-            <strong>Your intelligence is vital.</strong> We collect these details to build comprehensive cases that can be submitted to trading standards and regulatory bodies. *Always provide evidence (receipts/emails) later via your user portal.*
-          </div>
-        </div>
+                  <div className="space-y-2">
+                      <Label htmlFor="amount">Financial Loss (approx. £)</Label>
+                      <Input id="amount" type="number" value={formData.amount} onChange={handleChange} placeholder="e.g., 49.99" />
+                  </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6 bg-card p-6 rounded-lg border">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <Label htmlFor="name">Full Name *</Label>
-              <Input id="name" name="name" required />
-            </div>
+                  <div className="space-y-2">
+                      <Label htmlFor="issueDescription">Issue Description</Label>
+                      <Textarea id="issueDescription" value={formData.issueDescription} onChange={handleChange} rows={5} placeholder="Describe the incident, including dates and relevant details." required />
+                  </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Email Address *</Label>
-              <Input id="email" name="email" type="email" required />
-            </div>
+                  <div className="space-y-2">
+                      <Label htmlFor="desiredOutcome">Your Desired Outcome</Label>
+                      <Textarea id="desiredOutcome" value={formData.desiredOutcome} onChange={handleChange} rows={3} placeholder="e.g., Full refund of £49.99 and a public apology." required />
+                  </div>
+              </div>
+              
+              <h3 className="text-lg font-semibold border-b pb-2 pt-4">Your Contact Information (Private)</h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                      <Label htmlFor="name">Your Name</Label>
+                      <Input id="name" value={formData.name} onChange={handleChange} placeholder="First and Last Name" required />
+                  </div>
+                  <div className="space-y-2">
+                      <Label htmlFor="email">Email Address</Label>
+                      <Input id="email" type="email" value={formData.email} onChange={handleChange} placeholder="your@email.com" required />
+                  </div>
+                  <div className="space-y-2">
+                      <Label htmlFor="phone">Phone Number (Optional)</Label>
+                      <Input id="phone" type="tel" value={formData.phone} onChange={handleChange} placeholder="(123) 456-7890" />
+                  </div>
+              </div>
+              
+              <div className="flex items-center space-x-2 pt-4">
+                  <Checkbox id="terms" required />
+                  <label
+                      htmlFor="terms"
+                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                  >
+                      I confirm the above details are accurate to the best of my knowledge.
+                  </label>
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="phone">Phone Number</Label>
-              <Input id="phone" name="phone" type="tel" placeholder="Optional" />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="brandName">Brand/Company Name *</Label>
-              <Input id="brandName" name="brandName" required />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="category">Issue Category *</Label>
-              <Select name="category" required>
-                <SelectTrigger id="category">
-                  <SelectValue placeholder="Select category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="product-quality">Product Quality/Defect</SelectItem>
-                  <SelectItem value="false-advertising">False Advertising</SelectItem>
-                  <SelectItem value="refund-issues">Refund/Return Issues</SelectItem>
-                  <SelectItem value="delivery-problems">Delivery Problems</SelectItem>
-                  <SelectItem value="customer-service">Customer Service</SelectItem>
-                  <SelectItem value="pricing-issues">Pricing/Billing Issues</SelectItem>
-                  <SelectItem value="data-privacy">Data Privacy Concerns</SelectItem>
-                  <SelectItem value="safety-concerns">Safety Concerns</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="purchaseDate">Purchase Date</Label>
-              <Input id="purchaseDate" name="purchaseDate" type="date" />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="orderNumber">Order/Reference Number</Label>
-              <Input id="orderNumber" name="orderNumber" placeholder="Optional" />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="amount">Amount Involved (£)</Label>
-              <Input id="amount" name="amount" type="number" step="0.01" placeholder="0.00" />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="issueDescription">Describe Your Issue *</Label>
-            <Textarea 
-              id="issueDescription" 
-              name="issueDescription" 
-              required 
-              rows={6}
-              placeholder="Please provide as much detail as possible about your complaint, including dates, what happened, and any communication with the company..."
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="desiredOutcome">Desired Outcome</Label>
-            <Textarea 
-              id="desiredOutcome" 
-              name="desiredOutcome" 
-              rows={3}
-              placeholder="What resolution are you seeking? (e.g., refund, replacement, compensation, company action)"
-              value={desiredOutcome}
-              onChange={(e) => setDesiredOutcome(e.target.value)}
-            />
-          </div>
-
-          <Button type="submit" size="lg" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Submitting Intelligence..." : "Submit Incident Report"}
-          </Button>
-
-          <p className="text-xs text-muted-foreground text-center">
-            * Required fields. By submitting this form, you confirm that the information provided is accurate and may be used in cases submitted to trading standards.
-          </p>
-        </form>
+              <Button type="submit" className="w-full" disabled={isSubmitting}>
+                  {isSubmitting ? "Filing Report..." : "File Report"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
       </main>
     </div>
   );
-};
-
-export default FileComplaint;
+}

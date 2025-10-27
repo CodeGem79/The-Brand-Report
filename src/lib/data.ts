@@ -1,7 +1,7 @@
 // src/lib/data.ts
 import { collection, getDocs, query, orderBy, limit, doc, getDoc, updateDoc, deleteDoc, DocumentData, WithFieldValue, runTransaction, increment, arrayUnion, arrayRemove, addDoc, serverTimestamp, QueryDocumentSnapshot, startAfter } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Petition, BlogArticle, IncidentReport, ReportedComment } from "@/data/mockData";
+import { Petition, BlogArticle, IncidentReport, ReportedComment, Comment } from "@/data/mockData";
 
 
 // Utility function to map Firebase data to frontend types
@@ -32,7 +32,7 @@ export async function fetchPetitions(): Promise<Petition[]> {
       ...p,
       supporters: p.supporters || 0,
       updates: p.updates || [],
-      // Comments are fetched separately and are not expected here
+      // 🛑 CLEANUP: Removed vestigial 'comments' array initialization
   }));
 }
 
@@ -69,20 +69,20 @@ export async function fetchReportedComments(): Promise<ReportedComment[]> {
   return mapSnapshotToData<ReportedComment>(snapshot, "reportedAt");
 }
 
-// [NEW PAGINATED FETCH] Fetches comments from the subcollection in batches
+// [PAGINATED FETCH] Fetches comments from the subcollection in batches
 export async function fetchCommentsPaginated(
   petitionId: string,
   lastVisible: QueryDocumentSnapshot | null // The document to start after
 ): Promise<{ comments: Comment[]; lastVisible: QueryDocumentSnapshot | null; hasMore: boolean }> {
   
-  const commentsRef = collection(db, "petitions", petitionId, "comments"); // 🛑 NEW SUBCOLLECTION REF
+  const commentsRef = collection(db, "petitions", petitionId, "comments"); 
   const PAGE_SIZE = 10; // Set batch size to 10
 
   let commentsQuery = query(
     commentsRef,
     orderBy("date", "desc"), // Order by newest first
-    ...(lastVisible ? [startAfter(lastVisible)] : []), // Start after the last visible doc
-    limit(PAGE_SIZE) // 🛑 CRITICAL LIMITER
+    ...(lastVisible ? [startAfter(lastVisible)] : []), 
+    limit(PAGE_SIZE) 
   );
 
   const snapshot = await getDocs(commentsQuery);
@@ -113,7 +113,7 @@ export async function fetchPetition(id: string): Promise<Petition | undefined> {
             createdAt: createdAt,
             supporters: data.supporters || 0,
             updates: data.updates || [], 
-            // 🛑 MODIFIED: Removed comments array from return
+            // 🛑 CLEANUP: Removed 'comments' array from return
         } as Petition;
     } else {
         return undefined;
@@ -170,7 +170,7 @@ export async function addTimelineUpdate(petitionId: string, updateObject: {id: s
 
 // 🛑 MODIFIED: Add comment now uses the SUBCOLLECTION
 export async function addPublicComment(petitionId: string, author: string, content: string): Promise<void> {
-    const commentsRef = collection(db, "petitions", petitionId, "comments"); // 🛑 NEW SUBCOLLECTION REF
+    const commentsRef = collection(db, "petitions", petitionId, "comments"); 
     
     // Add the document directly to the subcollection
     await addDoc(commentsRef, {
@@ -183,7 +183,7 @@ export async function addPublicComment(petitionId: string, author: string, conte
 
 // 🛑 MODIFIED: Delete comment now uses the SUBCOLLECTION deleteDoc
 export async function deleteCommentFromPetition(petitionId: string, commentObject: any): Promise<void> {
-    const commentRef = doc(db, "petitions", petitionId, "comments", commentObject.id); // 🛑 NEW DOC REF
+    const commentRef = doc(db, "petitions", petitionId, "comments", commentObject.id); 
     
     // Use deleteDoc on the specific subcollection document
     await deleteDoc(commentRef); 

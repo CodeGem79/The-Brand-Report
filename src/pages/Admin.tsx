@@ -20,6 +20,7 @@ import { useQueryClient } from "@tanstack/react-query";
 // Import Firebase dependencies
 import { collection, addDoc, serverTimestamp, DocumentData } from "firebase/firestore";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, User } from "firebase/auth";
+// [CLEANUP] Removed: , functions
 import { db, auth } from "@/lib/firebase"; 
 import { Petition, ReportedComment } from "@/data/mockData"; 
 
@@ -202,7 +203,7 @@ const ReportDetailModal = ({
             
             <div className="font-medium">Amount:</div>
             <div className="text-muted-foreground">
-                {report.amount ? `£${report.amount.toFixed(2)}` : "N/A"}
+                {report.amount ? `拢${report.amount.toFixed(2)}` : "N/A"}
             </div>
             
             <div className="font-medium">Name:</div>
@@ -696,10 +697,10 @@ const AdminDashboard = ({
                   <SelectTrigger>
                     <SelectValue placeholder="Group by Brand" />
                   </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="brandName">Group by Brand</SelectItem>
-                    <SelectItem value="category">Group by Category</SelectItem>
-                  </SelectContent>
+                    <SelectContent>
+                        <SelectItem value="brandName">Group by Brand</SelectItem>
+                        <SelectItem value="category">Group by Category</SelectItem>
+                    </SelectContent>
                 </Select>
               </div>
 
@@ -1185,6 +1186,7 @@ const Admin = () => {
       await addTimelineUpdate(docRef.id, {
         id: Date.now().toString(),
         title: "Investigation Opened",
+        // 🛑 CLEANUP: Removed user?.email for privacy
         content: `Initial observation document created by Admin. Status set to: ${formData.status}`,
         date: new Date().toISOString()
       });
@@ -1347,7 +1349,7 @@ const Admin = () => {
             await addTimelineUpdate(id, {
                 id: Date.now().toString(),
                 title: updateTitle,
-                // 🛑 MODIFIED: Removed user?.email
+                // 🛑 CLEANUP: Removed user?.email for privacy
                 content: `Document edited by Admin.`, 
                 date: new Date().toISOString()
             });
