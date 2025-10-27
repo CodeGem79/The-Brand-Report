@@ -1,7 +1,7 @@
 // src/lib/data.ts
-import { collection, getDocs, query, orderBy, limit, doc, getDoc, updateDoc, deleteDoc, DocumentData, WithFieldValue, runTransaction, increment, FieldValue, arrayUnion, arrayRemove } from "firebase/firestore";
+import { collection, getDocs, query, orderBy, limit, doc, getDoc, updateDoc, deleteDoc, DocumentData, WithFieldValue, runTransaction, increment, arrayUnion, arrayRemove, addDoc, serverTimestamp, QueryDocumentSnapshot, startAfter } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Petition, BlogArticle, IncidentReport } from "@/data/mockData";
+import { Petition, BlogArticle, IncidentReport, ReportedComment } from "@/data/mockData";
 
 
 // Utility function to map Firebase data to frontend types
@@ -32,7 +32,7 @@ export async function fetchPetitions(): Promise<Petition[]> {
       ...p,
       supporters: p.supporters || 0,
       updates: p.updates || [],
-      comments: p.comments || [],
+      // Comments are fetched separately and are not expected here
   }));
 }
 
@@ -59,6 +59,44 @@ export async function fetchBlogArticles(): Promise<BlogArticle[]> {
   return mapSnapshotToData<BlogArticle>(snapshot, "publishedAt");
 }
 
+/** Fetches all reported public comments for admin review */
+export async function fetchReportedComments(): Promise<ReportedComment[]> {
+  const reportsQuery = query(
+    collection(db, "reported_comments"),
+    orderBy("reportedAt", "desc")
+  );
+  const snapshot = await getDocs(reportsQuery);
+  return mapSnapshotToData<ReportedComment>(snapshot, "reportedAt");
+}
+
+// [NEW PAGINATED FETCH] Fetches comments from the subcollection in batches
+export async function fetchCommentsPaginated(
+  petitionId: string,
+  lastVisible: QueryDocumentSnapshot | null // The document to start after
+): Promise<{ comments: Comment[]; lastVisible: QueryDocumentSnapshot | null; hasMore: boolean }> {
+  
+  const commentsRef = collection(db, "petitions", petitionId, "comments"); // 🛑 NEW SUBCOLLECTION REF
+  const PAGE_SIZE = 10; // Set batch size to 10
+
+  let commentsQuery = query(
+    commentsRef,
+    orderBy("date", "desc"), // Order by newest first
+    ...(lastVisible ? [startAfter(lastVisible)] : []), // Start after the last visible doc
+    limit(PAGE_SIZE) // 🛑 CRITICAL LIMITER
+  );
+
+  const snapshot = await getDocs(commentsQuery);
+  const comments = mapSnapshotToData<Comment>(snapshot, "date");
+  const lastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
+  
+  return {
+    comments: comments,
+    lastVisible: lastDoc,
+    hasMore: snapshot.docs.length === PAGE_SIZE,
+  };
+}
+
+
 // --- SINGLE DOCUMENT FETCHERS ---
 
 export async function fetchPetition(id: string): Promise<Petition | undefined> {
@@ -75,7 +113,7 @@ export async function fetchPetition(id: string): Promise<Petition | undefined> {
             createdAt: createdAt,
             supporters: data.supporters || 0,
             updates: data.updates || [], 
-            comments: data.comments || [],
+            // 🛑 MODIFIED: Removed comments array from return
         } as Petition;
     } else {
         return undefined;
@@ -109,8 +147,15 @@ export async function deleteDocument(collectionName: string, id: string): Promis
 /** Updates a document in a specified collection by ID. */
 export async function updateDocument<T extends DocumentData>(collectionName: string, id: string, data: Partial<WithFieldValue<T>>): Promise<void> {
     const docRef = doc(db, collectionName, id);
-    // This function will now succeed due to the relaxed Admin rule
     await updateDoc(docRef, data); 
+}
+
+/** Updates the status of a specific reported comment for admin tracking. */
+export async function updateReportStatus(reportId: string, newStatus: 'new' | 'reviewed' | 'action_taken'): Promise<void> {
+    const reportRef = doc(db, "reported_comments", reportId);
+    await updateDoc(reportRef, {
+        status: newStatus
+    });
 }
 
 // [NEW FUNCTION] To append a new update to the timeline array
@@ -123,20 +168,46 @@ export async function addTimelineUpdate(petitionId: string, updateObject: {id: s
     });
 }
 
-
+// 🛑 MODIFIED: Add comment now uses the SUBCOLLECTION
 export async function addPublicComment(petitionId: string, author: string, content: string): Promise<void> {
-    const petitionRef = doc(db, "petitions", petitionId);
+    const commentsRef = collection(db, "petitions", petitionId, "comments"); // 🛑 NEW SUBCOLLECTION REF
     
-    await updateDoc(petitionRef, {
-        comments: arrayUnion({
-            id: Date.now().toString(), 
-            author: author,
-            content: content,
-            date: new Date().toISOString(),
-            isClaimant: false, 
-        })
+    // Add the document directly to the subcollection
+    await addDoc(commentsRef, {
+        author: author,
+        content: content,
+        date: serverTimestamp(), // Use server timestamp for precise ordering
+        isClaimant: false, 
     });
 }
+
+// 🛑 MODIFIED: Delete comment now uses the SUBCOLLECTION deleteDoc
+export async function deleteCommentFromPetition(petitionId: string, commentObject: any): Promise<void> {
+    const commentRef = doc(db, "petitions", petitionId, "comments", commentObject.id); // 🛑 NEW DOC REF
+    
+    // Use deleteDoc on the specific subcollection document
+    await deleteDoc(commentRef); 
+}
+
+// [NEW FUNCTION] To log a report about an abusive public comment
+export async function reportComment(
+    petitionId: string, 
+    commentId: string, 
+    reporterName: string, 
+    reason: string
+): Promise<void> {
+    const reportsRef = collection(db, "reported_comments");
+    
+    await addDoc(reportsRef, {
+        petitionId: petitionId,
+        commentId: commentId,
+        reporterName: reporterName,
+        reason: reason,
+        reportedAt: serverTimestamp(),
+        status: 'new' // 'new', 'reviewed', 'action_taken'
+    });
+}
+
 
 // --- VERIFIED CLAIMANT WORKFLOW FUNCTIONS ---
 
@@ -171,7 +242,7 @@ export async function linkReportToPetition(
         
         const currentComments = petitionSnap.data().comments || [];
 
-        // 1. Update Petition: Increment supporter count and add claimant record
+        // 1. Update Petition: Increment supporter count and add claimant record (in the main array)
         transaction.update(petitionRef, {
             supporters: increment(1), 
             comments: [...currentComments, claimantComment],

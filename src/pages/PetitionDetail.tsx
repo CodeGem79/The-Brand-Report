@@ -1,8 +1,8 @@
 // src/pages/PetitionDetail.tsx
 
-import { useState } from "react";
-import { useParams, Link, Navigate } from "react-router-dom";
-import { ArrowLeft, TrendingUp, MessageSquare, Clock, CheckCircle2 } from "lucide-react";
+import { useState, useEffect } from "react"; 
+import { useParams, Link, Navigate, useLocation } from "react-router-dom"; 
+import { ArrowLeft, TrendingUp, MessageSquare, Clock, CheckCircle2, Trash2, Flag } from "lucide-react"; 
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,20 +11,104 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { useQuery, useQueryClient } from "@tanstack/react-query"; // [MODIFIED] Added useQueryClient
-import { fetchPetition, addPublicComment } from "@/lib/data"; // [MODIFIED] Added addPublicComment
+import { useQuery, useQueryClient } from "@tanstack/react-query"; 
+import { fetchPetition, addPublicComment, deleteCommentFromPetition, reportComment, fetchCommentsPaginated } from "@/lib/data"; 
+import { onAuthStateChanged, User } from "firebase/auth"; 
+import { auth } from "@/lib/firebase"; 
+import { Comment } from "@/data/mockData"; 
+import { QueryDocumentSnapshot } from "firebase/firestore"; 
+
 
 export default function PetitionDetail() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
-  const queryClient = useQueryClient(); // [NEW] Initialize query client
+  const queryClient = useQueryClient();
+  const location = useLocation(); 
   
-  // Fetch data using useQuery
+  // To track Admin status for the delete feature
+  const [adminUser, setAdminUser] = useState<User | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false); 
+  const [isReporting, setIsReporting] = useState(false); 
+  const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null); 
+  
+  // [NEW STATE FOR PAGINATION]
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [lastVisible, setLastVisible] = useState<QueryDocumentSnapshot | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [isCommentsLoading, setIsCommentsLoading] = useState(false); // Loading state for 'Load More'
+
+
+  // [SCROLL/HIGHLIGHT LOGIC]
+  useEffect(() => {
+    if (location.hash) {
+      const elementId = location.hash.substring(1);
+      const element = document.getElementById(elementId);
+      
+      if (element) {
+        requestAnimationFrame(() => {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+        
+        setHighlightedCommentId(elementId);
+      }
+    }
+  }, [location.hash]); 
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setAdminUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
+  
+  // Fetch Petition details (title, status, etc.)
   const { data: petition, isLoading } = useQuery({
     queryKey: ['petition', id],
     queryFn: () => (id ? fetchPetition(id) : Promise.resolve(undefined)), 
     enabled: !!id,
   });
+
+  // [NEW FUNCTION] Main Comment Fetcher
+  const loadComments = async (startAfterDoc: QueryDocumentSnapshot | null) => {
+    // Only proceed if startAfterDoc is null (initial load) OR if we know there are more pages (hasMore)
+    if (!id || (!hasMore && startAfterDoc)) return;
+
+    setIsCommentsLoading(true);
+    try {
+        const result = await fetchCommentsPaginated(id, startAfterDoc);
+        
+        // 🛑 CRITICAL FIX: Explicitly append to 'prev' only if it's a subsequent page load.
+        setComments(prev => {
+            if (startAfterDoc) {
+                // Subsequent load: Append new comments to the previous state
+                return [...prev, ...result.comments];
+            } else {
+                // Initial load or refresh: Replace with new comments
+                return result.comments;
+            }
+        });
+        
+        setLastVisible(result.lastVisible);
+        setHasMore(result.hasMore);
+
+    } catch (error) {
+        console.error("Error loading additional comments:", error); 
+        toast({ title: "Comment Load Failed", description: "Could not load additional comments.", variant: "destructive" });
+    } finally {
+        setIsCommentsLoading(false);
+    }
+  };
+  
+  // [NEW EFFECT] Initial load of comments when Petition data is ready
+  useEffect(() => {
+    if (petition && id) {
+        // Load the first page of comments
+        setComments([]); // Reset state for fresh load
+        setHasMore(true); // Ensure we attempt a fetch
+        loadComments(null);
+    }
+  }, [petition, id]); 
+
   
   const [isPostingComment, setIsPostingComment] = useState(false);
   const [commentName, setCommentName] = useState("");
@@ -34,7 +118,6 @@ export default function PetitionDetail() {
     return <Navigate to="/" replace />;
   }
 
-  // [MODIFIED] Disabled/Removed logic. The button is now purely informative.
   const handleSupport = () => {
     toast({
       title: "Support Feature Disabled",
@@ -42,7 +125,6 @@ export default function PetitionDetail() {
     });
   };
 
-  // [MODIFIED] Implemented live write logic for comments
   const handleComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!commentName.trim() || !commentText.trim()) return;
@@ -57,8 +139,8 @@ export default function PetitionDetail() {
             description: "Thank you for sharing your experience. Your comment is now live.",
         });
         
-        // Invalidate the query cache to force a data refresh on this page
-        queryClient.invalidateQueries({ queryKey: ['petition', id] });
+        // After posting, reload the entire comment list to show the new comment at the top
+        loadComments(null); 
         
         setCommentName("");
         setCommentText("");
@@ -73,6 +155,78 @@ export default function PetitionDetail() {
         setIsPostingComment(false);
     }
   };
+  
+  const handleDeleteComment = async (comment: Comment) => {
+      if (!id || !window.confirm(`Are you sure you want to delete this comment by ${comment.author}? This action is permanent.`)) {
+          return;
+      }
+      
+      setIsDeleting(true);
+      try {
+          // Deletes the subcollection document
+          await deleteCommentFromPetition(id, comment); 
+          
+          toast({
+              title: "Comment Deleted",
+              description: "The comment has been successfully removed.",
+          });
+          
+          // Reload comments from the beginning to show the updated list
+          loadComments(null); 
+          
+      } catch (error) {
+          console.error("Error deleting comment:", error);
+          toast({
+              title: "Deletion Failed",
+              description: "Failed to delete comment. Check Admin login status and Firestore rules.",
+              variant: "destructive"
+          });
+      } finally {
+          setIsDeleting(false);
+      }
+  }
+
+  const handleReportComment = async (comment: Comment) => {
+    if (!id) return;
+    
+    // Simple prompt dialog to get report info from public user
+    const reporterName = prompt("Enter your name (optional) to submit the report:");
+    if (reporterName === null) return; 
+
+    const reason = prompt(`Why are you reporting this comment by ${comment.author}? (e.g., 'Abusive', 'Spam', 'Hate Speech')`);
+    if (!reason || !reason.trim()) {
+        return toast({ title: "Report Canceled", description: "A reason is required to submit a report." });
+    }
+
+    // CRITICAL DIAGNOSTIC LOG 
+    console.log("Reporting Payload:");
+    console.log("Comment ID BEING SENT:", comment.id); 
+    console.log("-----------------------");
+    
+    setIsReporting(true);
+    try {
+        await reportComment(
+            id, 
+            comment.id, 
+            reporterName || "Anonymous User", 
+            reason.trim()
+        );
+
+        toast({
+            title: "Comment Reported",
+            description: "Thank you. This comment has been flagged for Admin review.",
+        });
+    } catch (error) {
+        console.error("Error reporting comment:", error);
+        toast({
+            title: "Report Failed",
+            description: "Could not submit report. Please try again.",
+            variant: "destructive"
+        });
+    } finally {
+        setIsReporting(false);
+    }
+  }
 
   const statusColors = {
     active: "bg-accent text-accent-foreground",
@@ -86,8 +240,8 @@ export default function PetitionDetail() {
     resolved: "Resolved"
   };
 
-  // Display Loading State
-  if (isLoading || !petition) {
+  // Display Loading State for main data
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
         <Header />
@@ -143,8 +297,9 @@ export default function PetitionDetail() {
                 <div className="text-sm text-muted-foreground">Verified Claimants</div>
               </div>
               <div className="text-center">
-                <div className="text-3xl font-bold mb-1">{petition.comments.length}</div>
-                <div className="text-sm text-muted-foreground">Total Comments</div>
+                {/* 🛑 MODIFIED: Comment count is now based on the fetched comments state */}
+                <div className="text-3xl font-bold mb-1">{comments.length}</div>
+                <div className="text-sm text-muted-foreground">Comments Shown</div>
               </div>
               <div className="text-center">
                 <div className="text-3xl font-bold mb-1">{petition.updates.length}</div>
@@ -244,31 +399,107 @@ export default function PetitionDetail() {
             <Separator className="my-6" />
 
             <div className="space-y-6">
-              {petition.comments.map((comment) => (
-                <div key={comment.id} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-sm">
-                      {comment.author}
-                      
-                      {comment.isClaimant && (
-                          <Badge 
-                              variant="secondary" 
-                              className="ml-2 bg-accent/10 text-accent-foreground text-xs font-normal hover:bg-accent/10" 
-                          >
-                              Verified Report
-                          </Badge>
-                      )}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(comment.date).toLocaleDateString()}
-                    </span>
+              {/* 🛑 MODIFIED: Rendering from local 'comments' state */}
+              {comments.map((comment) => {
+                // Check highlight status directly against the URL hash on every render.
+                const isReported = `#${comment.id}` === location.hash; 
+
+                return (
+                  <div 
+                    key={comment.id} 
+                    id={comment.id} // [CRITICAL FIX] Add ID for deep linking/scrolling
+                    // [FINAL FIX: USE INLINE STYLE] Uses a fixed yellow background for maximum visibility
+                    style={isReported ? { backgroundColor: '#FFFAE8', border: '2px solid #FFC107', borderRadius: '8px' } : {}}
+                    className={`space-y-2 p-3 -m-3 transition-all duration-300`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-sm">
+                        {comment.author}
+                        
+                        {comment.isClaimant && (
+                            <Badge 
+                                variant="secondary" 
+                                className="ml-2 bg-accent/10 text-accent-foreground text-xs font-normal hover:bg-accent/10" 
+                            >
+                                Verified Report
+                            </Badge>
+                        )}
+                        {isReported && (
+                            <Badge variant="destructive" className="ml-2 bg-red-600/90 text-white text-xs font-bold">
+                                REPORTED!
+                            </Badge>
+                        )}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(comment.date).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <div className="flex items-start justify-between">
+                        <p className={`text-sm ${comment.isClaimant ? 'text-foreground font-mono' : 'text-muted-foreground'}`}>
+                            {comment.content}
+                        </p>
+                        
+                        <div className="flex items-center space-x-2">
+                            {/* [NEW PUBLIC REPORT BUTTON] */}
+                            <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="w-6 h-6 text-muted-foreground/50 hover:text-red-500"
+                                onClick={() => handleReportComment(comment)}
+                                disabled={isReporting}
+                            >
+                                <Flag className="w-4 h-4" />
+                            </Button>
+                            
+                            {/* Admin Delete Button (for already implemented feature) */}
+                            {adminUser && !comment.isClaimant && (
+                                <Button 
+                                    variant="ghost" 
+                                    size="icon" 
+                                    className="w-6 h-6 text-destructive/70 hover:text-destructive"
+                                    onClick={() => handleDeleteComment(comment)}
+                                    disabled={isDeleting}
+                                >
+                                    <Trash2 className="w-4 h-4" />
+                                </Button>
+                            )}
+                            {/* Admin Delete Disabled for Verified Claimants */}
+                            {adminUser && comment.isClaimant && (
+                                <Button 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    className="text-xs w-auto h-6 text-muted-foreground/50 hover:text-muted-foreground/70"
+                                    disabled
+                                >
+                                    Admin Delete Disabled
+                                </Button>
+                            )}
+                        </div>
+
+                    </div>
+                    <Separator />
                   </div>
-                  <p className={`text-sm ${comment.isClaimant ? 'text-foreground font-mono' : 'text-muted-foreground'}`}>
-                      {comment.content}
-                  </p>
-                  <Separator />
-                </div>
-              ))}
+                );
+              })}
+              
+              {/* [NEW UI] Load More Button */}
+              {hasMore && (
+                  <div className="text-center pt-4">
+                      <Button 
+                          onClick={() => loadComments(lastVisible)}
+                          disabled={isCommentsLoading}
+                          variant="outline"
+                      >
+                          {isCommentsLoading ? "Loading..." : "Load More Comments"}
+                      </Button>
+                  </div>
+              )}
+              {/* Show message if all comments loaded */}
+              {!hasMore && comments.length > 0 && (
+                  <div className="text-center text-sm text-muted-foreground pt-4">
+                      All {comments.length} comments loaded.
+                  </div>
+              )}
             </div>
           </CardContent>
         </Card>

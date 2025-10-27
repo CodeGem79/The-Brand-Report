@@ -7,32 +7,26 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AlertCircle, Plus, BookOpen, BarChart3, FileText, TrendingUp, Lock, Pencil, Trash2, Save, Eye, Search, Users, CheckCircle2 } from "lucide-react";
+import { AlertCircle, Plus, BookOpen, BarChart3, FileText, TrendingUp, Lock, Pencil, Trash2, Save, Eye, Search, Users, CheckCircle2, Flag } from "lucide-react"; 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog"; 
 
+import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
 // Import Firebase dependencies
 import { collection, addDoc, serverTimestamp, DocumentData } from "firebase/firestore";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, User } from "firebase/auth";
-// [MODIFIED] Import Firebase Functions SDK and instance
-import { httpsCallable } from 'firebase/functions';
-import { db, auth, functions } from "@/lib/firebase"; 
-import { Petition } from "@/data/mockData"; 
+import { db, auth } from "@/lib/firebase"; 
+import { Petition, ReportedComment } from "@/data/mockData"; 
 
 // Import centralized data access functions
-import { fetchPetitions, fetchIncidentReports, fetchBlogArticles, deleteDocument, updateDocument, linkReportToPetition, unlinkClaimantFromPetition, addTimelineUpdate } from "@/lib/data";
+import { fetchPetitions, fetchIncidentReports, fetchBlogArticles, fetchReportedComments, deleteDocument, updateDocument, linkReportToPetition, unlinkClaimantFromPetition, addTimelineUpdate, deleteCommentFromPetition, updateReportStatus, fetchPetition } from "@/lib/data"; 
 // Import CSV export utility
 import { exportToCsv } from "@/lib/utils";
-
-// --- CLOUD FUNCTION CALLERS ---
-// These functions will execute the save on the server side
-const callAdminUpdate = httpsCallable(functions, 'updateAdminDocument');
-const callTimelineLog = httpsCallable(functions, 'addTimelineLog');
 
 
 // Type for Incident Report (Must be defined here for the component)
@@ -298,7 +292,8 @@ const EditModal = ({
   collectionName: 'petitions' | 'blog_articles';
   isOpen: boolean;
   onClose: () => void;
-  onSave: (id: string, data: any) => Promise<void>;
+  // [FIXED PROP TYPE] Must match handleUpdate signature: (collectionName, updatedData)
+  onSave: (collectionName: 'petitions' | 'blog_articles', updatedData: EditableItem) => Promise<void>; 
 }) => {
   const isPetition = collectionName === 'petitions';
   
@@ -322,8 +317,8 @@ const EditModal = ({
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if(editData) {
-        // CALLS handleUpdate in the parent component
-        await onSave(editData.id, editData);
+        // [FIXED CALL] Pass collectionName first, then updatedData
+        await onSave(collectionName, editData); 
     }
     onClose();
   };
@@ -452,6 +447,8 @@ const AdminDashboard = ({
   handleDelete,
   handleUpdate,
   blogArticles,
+  reportedComments, 
+  handleModerateReport,
   openEditModal,
   openReportModal,
   openClaimantModal, // Prop to open the claimant list
@@ -472,6 +469,8 @@ const AdminDashboard = ({
   handleDelete: (collectionName: string, id: string) => Promise<void>;
   handleUpdate: (collectionName: 'petitions' | 'blog_articles', updatedData: EditableItem) => Promise<void>;
   blogArticles: EditableItem[];
+  reportedComments: ReportedComment[]; 
+  handleModerateReport: (report: ReportedComment) => Promise<void>;
   openEditModal: (collectionName: 'petitions' | 'blog_articles', item: EditableItem) => void;
   openReportModal: (report: IncidentReport) => void;
   openClaimantModal: (petition: Petition) => void;
@@ -767,6 +766,72 @@ const AdminDashboard = ({
               )}
             </CardContent>
           </Card>
+          
+          {/* [NEW CARD] Reported Comments Triage */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Flag className="w-5 h-5" />
+                Reported Comments for Review ({reportedComments.filter(r => r.status === 'new').length})
+              </CardTitle>
+              <CardDescription>Public comments flagged for moderation. Click Investigation to review the comment context.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className="text-center py-8 text-muted-foreground">Loading reported comments...</div>
+              ) : reportedComments.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">No new comments have been reported.</div>
+              ) : (
+                <div className="space-y-4 max-h-[500px] overflow-y-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Reason / Reporter</TableHead>
+                        <TableHead>Petition</TableHead>
+                        <TableHead>Reported At</TableHead>
+                        <TableHead className="w-[150px] text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {reportedComments.filter(r => r.status === 'new').map(report => (
+                        <TableRow key={report.id}>
+                          <TableCell>
+                            <div className="font-medium">{report.reason}</div>
+                            <div className="text-xs text-muted-foreground">by {report.reporterName}</div>
+                          </TableCell>
+                          <TableCell>
+                            <Link 
+                              to={`/petition/${report.petitionId}#${report.commentId}`} 
+                              className="text-accent hover:underline text-sm"
+                              target="_blank" // Open in new tab for review
+                            >
+                              View Investigation (Comment ID: {report.commentId.substring(0, 6)}...)
+                            </Link>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground text-sm">
+                            {new Date(report.reportedAt).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell className="text-right space-x-2">
+                            <Button 
+                              variant="destructive" 
+                              size="sm" 
+                              // [WIRED UP] Call the moderation function
+                              onClick={() => handleModerateReport(report)}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete Comment
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+
         </TabsContent>
         
         {/* INVESTIGATIONS TAB - Create & Manage */}
@@ -979,6 +1044,7 @@ const Admin = () => {
   const [incidentReports, setIncidentReports] = useState<IncidentReport[]>([]);
   const [petitions, setPetitions] = useState<Petition[]>([]);
   const [blogArticles, setBlogArticles] = useState<EditableItem[]>([]); 
+  const [reportedComments, setReportedComments] = useState<ReportedComment[]>([]); 
   const [loadingData, setLoadingData] = useState(true);
   
   const [formData, setFormData] = useState({
@@ -1031,6 +1097,7 @@ const Admin = () => {
   const invalidateAllQueries = () => {
       queryClient.invalidateQueries({ queryKey: ['petitions'] });
       queryClient.invalidateQueries({ queryKey: ['blogArticles'] });
+      queryClient.invalidateQueries({ queryKey: ['reportedComments'] });
       setLoadingAuth(false); 
   };
   
@@ -1038,7 +1105,7 @@ const Admin = () => {
     const fetchAllData = async () => {
       setLoadingData(true);
       try {
-        const reportsData = await fetchIncidentReports(); // Fetch all reports
+        const reportsData = await fetchIncidentReports(); 
         setIncidentReports(reportsData);
         
         const petitionsData = await fetchPetitions();
@@ -1047,6 +1114,10 @@ const Admin = () => {
         const blogArticlesData = await fetchBlogArticles(); 
         setBlogArticles(blogArticlesData as EditableItem[]);
         
+        // [NEW FETCH] Fetch reported comments
+        const reportedData = await fetchReportedComments();
+        setReportedComments(reportedData);
+
       } catch (error) {
         console.error("Error fetching data: ", error);
         toast({
@@ -1103,11 +1174,21 @@ const Admin = () => {
     if (!user) return toast({ title: "Permission Denied", description: "You must be signed in to create content.", variant: "destructive" });
     
     try {
-      await addDoc(collection(db, "petitions"), {
+      // 1. Create the base petition document
+      const docRef = await addDoc(collection(db, "petitions"), {
         brand: formData.brand, title: formData.title, description: formData.description,
         supporters: 0, status: formData.status, createdAt: serverTimestamp(),
         blogContent: formData.blogContent, updates: [], comments: [],
       });
+
+      // 2. 🛑 MODIFIED: Add initial timeline entry without Admin email
+      await addTimelineUpdate(docRef.id, {
+        id: Date.now().toString(),
+        title: "Investigation Opened",
+        content: `Initial observation document created by Admin. Status set to: ${formData.status}`,
+        date: new Date().toISOString()
+      });
+      
       toast({ title: "Investigation Launched!", description: `Brand ${formData.brand} is now on The Watchlist.` });
       setFormData({ brand: "", title: "", description: "", status: "active", blogContent: "" });
       invalidateAllQueries(); 
@@ -1197,56 +1278,118 @@ const Admin = () => {
     }
   };
 
-  // [MODIFIED] Using Cloud Function to bypass client-side permission denial
+  // [NEW FUNCTION] Function to delete the comment and mark the report as handled
+  const handleModerateReport = async (report: ReportedComment) => {
+    if (!user) return toast({ title: "Permission Denied", description: "You must be signed in to moderate content.", variant: "destructive" });
+
+    if (!window.confirm(`Are you sure you want to DELETE the comment associated with this report? (Comment ID: ${report.commentId.substring(0, 8)}...)`)) {
+      return;
+    }
+    
+    // 1. Fetch the petition to get the exact comment object
+    const petitionToModerate = await fetchPetition(report.petitionId);
+
+    if (!petitionToModerate) {
+        toast({ title: "Error", description: "Target investigation not found.", variant: "destructive" });
+        // Mark the report as reviewed/action_taken if the petition itself is gone
+        await deleteDocument("reported_comments", report.id);
+        invalidateAllQueries();
+        return;
+    }
+    
+    // Find the exact comment object using the commentId
+    const commentToDelete = { id: report.commentId };
+
+    try {
+        // 2. Delete the comment from the petition's subcollection
+        await deleteCommentFromPetition(report.petitionId, commentToDelete);
+        
+        // 3. Delete the report document entirely
+        await deleteDocument("reported_comments", report.id);
+
+        toast({ title: "Moderation Complete", description: `Comment deleted. Report dismissed.`, variant: "default" });
+        
+        // 4. Refresh data
+        invalidateAllQueries();
+        queryClient.invalidateQueries({ queryKey: ['petition', report.petitionId] });
+
+    } catch (error) {
+        console.error("Error moderating report: ", error);
+        toast({ title: "Moderation Failed", description: "Could not complete moderation. Check database status.", variant: "destructive" });
+    }
+  };
+
+
+  // [FINAL CORRECTED LOGIC] Client-side update with manual payload construction
   const handleUpdate = async (collectionName: 'petitions' | 'blog_articles', updatedData: EditableItem) => {
     if (!user) return toast({ title: "Permission Denied", description: "You must be signed in to edit content.", variant: "destructive" });
 
     try {
-      const { id, ...dataToUpdate } = updatedData;
+      const { id } = updatedData;
+      let dataToUpdate: any = {};
       
-      if (collectionName === 'petitions' && 'createdAt' in dataToUpdate) {
-          delete dataToUpdate.createdAt;
-      }
-      if (collectionName === 'blog_articles' && 'publishedAt' in dataToUpdate) {
-          delete dataToUpdate.publishedAt;
-      }
-
-      // --- CRITICAL SERVERLESS FIX ---
-      // 1. Call the secure Cloud Function to execute the document update
-      await callAdminUpdate({
-          collectionName: collectionName,
-          id: id,
-          updates: dataToUpdate,
-      });
-      
-      // 2. [NEW FEATURE LOGIC] Check if it was a petition being updated
+      // 🛑 CRITICAL FIX: MANUALLY CONSTRUCT THE PAYLOAD (WHITELISTING FIELDS)
       if (collectionName === 'petitions') {
+        const petitionData = updatedData as Petition;
+        dataToUpdate = {
+            title: petitionData.title,
+            brand: petitionData.brand,
+            description: petitionData.description,
+            status: petitionData.status,
+            blogContent: petitionData.blogContent,
+            // Only explicitly editable fields are included.
+        };
+
+        // 2. 🛑 MODIFIED: Log Update to Timeline without Admin email
         const updateTitle = prompt("Update Saved. Would you like to log this change to the Investigation Timeline? Enter a brief title for the log (e.g., 'Status Changed to Investigating'):");
         
         if (updateTitle) {
-            const updateObject = {
+            await addTimelineUpdate(id, {
                 id: Date.now().toString(),
                 title: updateTitle,
-                content: `Document edited by Admin (${user?.email || 'Admin User'})`,
+                // 🛑 MODIFIED: Removed user?.email
+                content: `Document edited by Admin.`, 
                 date: new Date().toISOString()
-            };
-            // 3. Call the secure Cloud Function to log the timeline entry
-            await callTimelineLog({ petitionId: id, updateObject: updateObject });
+            });
         }
-      }
-      
-      toast({ title: "Document Updated", description: `${updatedData.title || (updatedData as Petition).brand} successfully updated.` });
-      invalidateAllQueries(); 
-      
-      if (collectionName === 'petitions') {
-          queryClient.invalidateQueries({ queryKey: ['petition', id] });
+
       } else if (collectionName === 'blog_articles') {
-          queryClient.invalidateQueries({ queryKey: ['blogArticle', id] });
+        // Explicitly treat the data as a BlogArticle (plus ID/Title)
+        const blogData = updatedData as EditableItem & { excerpt: string; content: string; category: string; featured: boolean; image: string };
+        dataToUpdate = {
+            title: blogData.title,
+            excerpt: blogData.excerpt,
+            content: blogData.content,
+            category: blogData.category,
+            featured: blogData.featured,
+            image: blogData.image,
+            // Only explicitly editable fields are included.
+        };
       }
+      
+      // Throw an error if no fields were included (meaning no editable fields exist or were changed)
+      if (Object.keys(dataToUpdate).length === 0) {
+          throw new Error("No valid fields found in payload.");
+      }
+
+      // 1. Call the simple utility that uses updateDoc (client SDK)
+      await updateDocument(collectionName, id, dataToUpdate);
+      
+      // Use the new payload content in the success message
+      toast({ 
+        title: "Document Updated", 
+        description: `Saved: ${dataToUpdate.title || dataToUpdate.brand} (New status: ${dataToUpdate.status || 'N/A'})`,
+      });
+      
+      // Force a refresh of the lists and the specific item
+      queryClient.invalidateQueries({ queryKey: ['petitions'] });
+      queryClient.invalidateQueries({ queryKey: ['blogArticles'] });
+      queryClient.invalidateQueries({ queryKey: [collectionName.slice(0, -1), id] }); 
 
     } catch (error) {
       console.error("Error updating document: ", error);
-      toast({ title: "Update Failed", description: "Could not update document. Check server logs.", variant: "destructive" });
+      // Fallback error message
+      toast({ title: "Update Failed", description: `Could not save document. Check console for error: ${error.message}`, variant: "destructive" });
     }
   };
   
@@ -1392,6 +1535,8 @@ const Admin = () => {
           handleDelete={handleDelete}
           handleUpdate={handleUpdate}
           blogArticles={blogArticles}
+          reportedComments={reportedComments} 
+          handleModerateReport={handleModerateReport}
           openEditModal={openEditModal}
           openReportModal={openReportModal}
           openClaimantModal={openClaimantModal}

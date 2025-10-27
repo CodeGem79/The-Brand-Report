@@ -10,6 +10,18 @@ export interface Comment {
   author: string;
   date: string;
   content: string;
+  isClaimant?: boolean;
+}
+
+// [MODERATION FEATURE] New interface for reported public comments
+export interface ReportedComment {
+  id: string;
+  petitionId: string;
+  commentId: string;
+  reporterName: string;
+  reason: string;
+  reportedAt: string;
+  status: 'new' | 'reviewed' | 'action_taken';
 }
 
 export interface Petition {
@@ -22,7 +34,7 @@ export interface Petition {
   createdAt: string;
   blogContent: string;
   updates: Update[];
-  comments: Comment[];
+  // 🛑 SCALABILITY FIX: The 'comments' array has been removed.
 }
 
 export const mockPetitions: Petition[] = [
@@ -81,26 +93,7 @@ The Brand Report will continue monitoring this situation and updating supporters
         content: 'TechGiant Inc. has been placed under formal observation. Evidence collection phase initiated.'
       }
     ],
-    comments: [
-      {
-        id: 'c1',
-        author: 'Sarah M.',
-        date: '2025-02-12',
-        content: 'This happened to me too! They kept saying I violated terms but never explained how. Thank you for investigating this.'
-      },
-      {
-        id: 'c2',
-        author: 'Mike R.',
-        date: '2025-02-11',
-        content: 'I spent weeks going in circles with customer service. Finally gave up. Glad someone is holding them accountable.'
-      },
-      {
-        id: 'c3',
-        author: 'Jennifer K.',
-        date: '2025-02-09',
-        content: 'Same experience here. The policy says 14 days, I requested on day 7, and they still denied it.'
-      }
-    ]
+    // 🛑 SCALABILITY FIX: 'comments' array removed
   },
   {
     id: '2',
@@ -129,14 +122,7 @@ We are currently gathering evidence and working with affected consumers to docum
         content: 'Investigation gaining momentum. Multiple state attorney general offices have been contacted.'
       }
     ],
-    comments: [
-      {
-        id: 'c4',
-        author: 'Alex T.',
-        date: '2025-02-08',
-        content: 'I was charged for 4 months before I noticed! They refused to refund any of it.'
-      }
-    ]
+    // 🛑 SCALABILITY FIX: 'comments' array removed
   },
   {
     id: '3',
@@ -158,14 +144,7 @@ Consumers reporting legitimate product defects are being told their warranty is 
 
 We're collecting documentation from affected consumers and reviewing the warranty terms against the company's actual practices.`,
     updates: [],
-    comments: [
-      {
-        id: 'c5',
-        author: 'Robert L.',
-        date: '2025-02-11',
-        content: 'My appliance failed after 8 months. They said I "misused" it but wouldn\'t explain how.'
-      }
-    ]
+    // 🛑 SCALABILITY FIX: 'comments' array removed
   }
 ];
 
